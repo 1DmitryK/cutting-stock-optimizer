@@ -1,0 +1,1257 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Оптимизатор раскроя материалов (1D/2D Cutting Stock)</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --accent: #38bdf8;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    body {
+      color: var(--text);
+      background-color: var(--bg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    input, select, button {
+      transition: all 0.15s ease-in-out;
+    }
+    /* Custom scrollbars */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(30, 41, 59, 0.5); }
+    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+  </style>
+</head>
+<body class="p-4 md:p-6 min-h-screen">
+  <div class="max-w-7xl mx-auto space-y-6">
+    
+    <!-- Header -->
+    <header class="flex flex-col md:flex-row items-start md:items-center justify-between pb-4 border-b border-[var(--border)] gap-4">
+      <div>
+        <div class="flex items-center gap-3">
+          <span class="p-2 rounded-lg bg-sky-500/20 text-sky-400 border border-sky-500/30">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5" />
+            </svg>
+          </span>
+          <div>
+            <h1 class="text-xl md:text-2xl font-bold tracking-tight">Калькулятор раскроя материалов</h1>
+            <p class="text-xs md:text-sm text-slate-400">1D / 2D Cutting Stock Optimizer с визуализацией карт распила на Canvas</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mode & Action Controls -->
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="bg-slate-800 p-1 rounded-lg border border-slate-700 flex text-xs font-semibold">
+          <button id="mode1dBtn" onclick="setMode('1D')" class="px-3 py-1.5 rounded-md transition-colors text-slate-400 hover:text-white">
+            1D (Профили / Доски)
+          </button>
+          <button id="mode2dBtn" onclick="setMode('2D')" class="px-3 py-1.5 rounded-md transition-colors bg-sky-500 text-white shadow-sm">
+            2D (Листы / Плиты)
+          </button>
+        </div>
+        <button onclick="loadSampleData()" class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-xs text-slate-300 hover:bg-slate-700">
+          Пример данных
+        </button>
+        <button onclick="calculateOptimization()" class="px-4 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-semibold shadow-md flex items-center gap-1.5">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          Рассчитать раскрой
+        </button>
+      </div>
+    </header>
+
+    <!-- Global Parameters Bar -->
+    <div class="bg-slate-800/80 border border-slate-700/80 rounded-xl p-4 grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+      <div>
+        <label class="block text-slate-400 mb-1 font-medium">Ширина пропила / реза (Kerf), мм</label>
+        <input type="number" id="kerfInput" value="3.2" step="0.1" min="0" max="20" class="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-1.5 text-white focus:outline-none focus:border-sky-500">
+        <span class="text-[11px] text-slate-500">Толщина диска / пилы / фрезы</span>
+      </div>
+      <div>
+        <label class="block text-slate-400 mb-1 font-medium">Торцевой спил / кромка листа, мм</label>
+        <input type="number" id="marginInput" value="10" step="1" min="0" max="50" class="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-1.5 text-white focus:outline-none focus:border-sky-500">
+        <span class="text-[11px] text-slate-500">Срез неровных краев заготовки</span>
+      </div>
+      <div id="rotationOptionContainer">
+        <label class="block text-slate-400 mb-1 font-medium">Ориентация деталей</label>
+        <select id="allowRotationSelect" class="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-1.5 text-white focus:outline-none focus:border-sky-500">
+          <option value="true">Разрешить поворот (90°)</option>
+          <option value="false">Строго вдоль волокон (без поворота)</option>
+        </select>
+        <span class="text-[11px] text-slate-500">Влияет на текстуру дерева / прокат</span>
+      </div>
+      <div>
+        <label class="block text-slate-400 mb-1 font-medium">Алгоритм оптимизации</label>
+        <select id="algorithmSelect" class="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-1.5 text-white focus:outline-none focus:border-sky-500">
+          <option value="guillotine_bssf">Guillotine BSSF (Форматно-раскроечный)</option>
+          <option value="maxrects">MaxRects Best Area Fit (Плотный нестинг)</option>
+          <option value="shelf">Shelf Best-Height (Быстрый рядный)</option>
+        </select>
+        <span class="text-[11px] text-slate-500">Тип станков и резов</span>
+      </div>
+    </div>
+
+    <!-- Main Workspace: Inputs & Controls -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      
+      <!-- Left Column: Materials & Parts Inputs (5 cols) -->
+      <div class="lg:col-span-5 space-y-6">
+        
+        <!-- Stock Materials Panel -->
+        <div class="bg-slate-800/90 border border-slate-700 rounded-xl p-4 shadow-sm">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-semibold flex items-center gap-2 text-sky-400">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+              1. Исходные заготовки (Склад / Листы)
+            </h2>
+            <button onclick="addStockRow()" class="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-white flex items-center gap-1">
+              + Добавить
+            </button>
+          </div>
+          <p class="text-xs text-slate-400 mb-3" id="stockHelpText">Размеры стандартных заготовок на складе или обрезков</p>
+          
+          <div class="overflow-x-auto max-h-48 overflow-y-auto border border-slate-700/60 rounded-lg">
+            <table class="w-full text-xs text-left">
+              <thead class="bg-slate-900/80 text-slate-400 uppercase text-[10px] sticky top-0">
+                <tr>
+                  <th class="p-2">Название</th>
+                  <th class="p-2" id="stockDimHead">Размеры (мм)</th>
+                  <th class="p-2">Кол-во</th>
+                  <th class="p-2 text-right">Уд.</th>
+                </tr>
+              </thead>
+              <tbody id="stockTableBody" class="divide-y divide-slate-700/40">
+                <!-- Rows injected dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Parts to Cut Panel -->
+        <div class="bg-slate-800/90 border border-slate-700 rounded-xl p-4 shadow-sm">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-semibold flex items-center gap-2 text-emerald-400">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+              2. Необходимые детали (Спецификация)
+            </h2>
+            <button onclick="addPartRow()" class="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-white flex items-center gap-1">
+              + Добавить деталь
+            </button>
+          </div>
+          <p class="text-xs text-slate-400 mb-3">Список деталей к выпиливанию с точными размерами</p>
+          
+          <div class="overflow-x-auto max-h-64 overflow-y-auto border border-slate-700/60 rounded-lg">
+            <table class="w-full text-xs text-left">
+              <thead class="bg-slate-900/80 text-slate-400 uppercase text-[10px] sticky top-0">
+                <tr>
+                  <th class="p-2">Маркировка</th>
+                  <th class="p-2" id="partsDimHead">Размеры (мм)</th>
+                  <th class="p-2">Шт.</th>
+                  <th class="p-2 text-center" id="partRotHead">Поворот</th>
+                  <th class="p-2 text-right">Уд.</th>
+                </tr>
+              </thead>
+              <tbody id="partsTableBody" class="divide-y divide-slate-700/40">
+                <!-- Rows injected dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Presets quick buttons -->
+        <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3 flex flex-wrap items-center gap-2 text-xs">
+          <span class="text-slate-400">Пресеты:</span>
+          <button onclick="loadPreset('plywood')" class="px-2.5 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200">
+            Фанера (2440×1220)
+          </button>
+          <button onclick="loadPreset('furniture')" class="px-2.5 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200">
+            ЛДСП Шкаф (2800×2070)
+          </button>
+          <button onclick="loadPreset('profile1d')" class="px-2.5 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200">
+            Профиль 1D (6000 мм)
+          </button>
+          <button onclick="loadPreset('decking1d')" class="px-2.5 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200">
+            Брус / Доска 1D (4000 мм)
+          </button>
+        </div>
+
+      </div>
+
+      <!-- Right Column: Visualizer Canvas & Stats (7 cols) -->
+      <div class="lg:col-span-7 space-y-4">
+        
+        <!-- Summary Stats Metrics -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div class="bg-slate-800 border border-slate-700/80 rounded-xl p-3">
+            <span class="text-[11px] text-slate-400 font-medium">КИМ (Эффективность)</span>
+            <div class="text-xl font-bold text-sky-400 mt-0.5" id="statEfficiency">0%</div>
+            <div class="text-[10px] text-slate-500 mt-1" id="statEfficiencySub">Полезная площадь / длина</div>
+          </div>
+          <div class="bg-slate-800 border border-slate-700/80 rounded-xl p-3">
+            <span class="text-[11px] text-slate-400 font-medium">Заготовок исп-но</span>
+            <div class="text-xl font-bold text-emerald-400 mt-0.5" id="statSheetsUsed">0 шт</div>
+            <div class="text-[10px] text-slate-500 mt-1" id="statSheetsSub">Всего листов / хлыстов</div>
+          </div>
+          <div class="bg-slate-800 border border-slate-700/80 rounded-xl p-3">
+            <span class="text-[11px] text-slate-400 font-medium">Деталей размещено</span>
+            <div class="text-xl font-bold text-amber-400 mt-0.5" id="statPartsPlaced">0 / 0</div>
+            <div class="text-[10px] text-slate-500 mt-1" id="statPartsSub">Все детали вошли</div>
+          </div>
+          <div class="bg-slate-800 border border-slate-700/80 rounded-xl p-3">
+            <span class="text-[11px] text-slate-400 font-medium">Потери и опил</span>
+            <div class="text-xl font-bold text-rose-400 mt-0.5" id="statWaste">0%</div>
+            <div class="text-[10px] text-slate-500 mt-1" id="statWasteSub">Обрезки + ширина реза</div>
+          </div>
+        </div>
+
+        <!-- Canvas Container with Navigation & Toolbar -->
+        <div class="bg-slate-800 border border-slate-700 rounded-xl p-4 shadow-sm flex flex-col">
+          <div class="flex flex-wrap items-center justify-between pb-3 border-b border-slate-700/70 gap-2">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-semibold text-slate-200">Карта раскроя:</span>
+              <div id="sheetPagination" class="flex items-center gap-1">
+                <!-- Dynamically filled with Sheet 1, 2, 3 buttons -->
+              </div>
+            </div>
+            
+            <div class="flex items-center gap-2 text-xs">
+              <label class="flex items-center gap-1.5 text-slate-300 cursor-pointer select-none">
+                <input type="checkbox" id="showDimensionsCheck" checked onchange="redrawActiveSheet()" class="rounded bg-slate-900 border-slate-600 text-sky-500 focus:ring-0">
+                Размеры деталей
+              </label>
+              <label class="flex items-center gap-1.5 text-slate-300 cursor-pointer select-none">
+                <input type="checkbox" id="showKerfCheck" checked onchange="redrawActiveSheet()" class="rounded bg-slate-900 border-slate-600 text-sky-500 focus:ring-0">
+                Линии пропила
+              </label>
+              <button onclick="downloadCanvasImage()" class="px-2.5 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 flex items-center gap-1">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                Экспорт PNG
+              </button>
+            </div>
+          </div>
+
+          <!-- Canvas Display Area -->
+          <div class="relative w-full mt-3 bg-slate-900/90 rounded-lg p-3 border border-slate-700/50 flex flex-col items-center justify-center min-h-[380px] overflow-hidden" id="canvasWrapper">
+            <canvas id="cuttingCanvas" class="max-w-full rounded shadow-md"></canvas>
+            
+            <div id="canvasEmptyState" class="absolute inset-0 flex flex-col items-center justify-center text-slate-500 pointer-events-none">
+              <svg class="w-12 h-12 mb-2 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+              </svg>
+              <p class="text-xs">Нажмите «Рассчитать раскрой» для построения карты</p>
+            </div>
+          </div>
+
+          <!-- Sheet details bar -->
+          <div class="mt-3 pt-3 border-t border-slate-700/60 flex flex-wrap items-center justify-between text-xs text-slate-400 gap-2">
+            <div id="currentSheetInfo">Заготовка не выбрана</div>
+            <div class="flex items-center gap-4 text-[11px]">
+              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-sky-500/80 inline-block"></span> Детали</span>
+              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-amber-500/30 border border-dashed border-amber-500/70 inline-block"></span> Деловой остаток</span>
+              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-rose-500/30 inline-block"></span> Пропил / Отход</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cutting Order / Table Details -->
+        <div class="bg-slate-800/70 border border-slate-700/70 rounded-xl p-4 text-xs">
+          <h3 class="font-semibold text-slate-200 mb-2 flex items-center justify-between">
+            <span>Спецификация текущей карты (Детали на листе)</span>
+            <span id="sheetPartCountBadge" class="text-[11px] text-sky-400 font-normal">0 деталей</span>
+          </h3>
+          <div class="overflow-x-auto max-h-40 overflow-y-auto">
+            <table class="w-full text-left text-slate-300">
+              <thead class="text-slate-400 text-[10px] uppercase border-b border-slate-700">
+                <tr>
+                  <th class="py-1 px-2">#</th>
+                  <th class="py-1 px-2">Маркировка</th>
+                  <th class="py-1 px-2">Размер (мм)</th>
+                  <th class="py-1 px-2">Координаты (X, Y)</th>
+                  <th class="py-1 px-2">Поворот</th>
+                </tr>
+              </thead>
+              <tbody id="sheetPartsTableBody" class="divide-y divide-slate-700/40">
+                <tr><td colspan="5" class="py-2 px-2 text-slate-500">Нет данных для отображения</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- SCRIPT LOGIC -->
+  <script>
+    // State
+    let currentMode = '2D'; // '1D' or '2D'
+    let currentSheetIndex = 0;
+    let calculationResults = null;
+
+    // Palette for distinct part colors
+    const PART_COLORS = [
+      { fill: '#0284c7', border: '#38bdf8', text: '#ffffff' }, // Sky
+      { fill: '#059669', border: '#34d399', text: '#ffffff' }, // Emerald
+      { fill: '#7c3aed', border: '#a78bfa', text: '#ffffff' }, // Purple
+      { fill: '#d97706', border: '#fbbf24', text: '#ffffff' }, // Amber
+      { fill: '#dc2626', border: '#f87171', text: '#ffffff' }, // Red
+      { fill: '#0891b2', border: '#22d3ee', text: '#ffffff' }, // Cyan
+      { fill: '#4f46e5', border: '#818cf8', text: '#ffffff' }, // Indigo
+      { fill: '#c026d3', border: '#f472b6', text: '#ffffff' }, // Fuchsia
+      { fill: '#16a34a', border: '#4ade80', text: '#ffffff' }, // Green
+      { fill: '#ea580c', border: '#fb923c', text: '#ffffff' }, // Orange
+    ];
+
+    // Presets
+    const PRESETS = {
+      plywood: {
+        mode: '2D',
+        kerf: 3.2,
+        margin: 10,
+        allowRot: true,
+        stock: [
+          { name: 'Фанера ФК 15мм', length: 2440, width: 1220, count: 5 }
+        ],
+        parts: [
+          { name: 'Боковина шкафа', length: 1800, width: 500, count: 2, canRotate: true },
+          { name: 'Полка верхняя', length: 768, width: 480, count: 4, canRotate: true },
+          { name: 'Цоколь', length: 800, width: 100, count: 2, canRotate: true },
+          { name: 'Фасад ящика', length: 450, width: 220, count: 4, canRotate: true },
+          { name: 'Дно ящика', length: 450, width: 400, count: 4, canRotate: true }
+        ]
+      },
+      furniture: {
+        mode: '2D',
+        kerf: 4.0,
+        margin: 15,
+        allowRot: false, // Strict grain
+        stock: [
+          { name: 'ЛДСП Дуб 16мм', length: 2800, width: 2070, count: 3 }
+        ],
+        parts: [
+          { name: 'Стенка левая', length: 2400, width: 600, count: 1, canRotate: false },
+          { name: 'Стенка правая', length: 2400, width: 600, count: 1, canRotate: false },
+          { name: 'Перегородка', length: 2300, width: 580, count: 1, canRotate: false },
+          { name: 'Крыша/Дно', length: 1800, width: 600, count: 2, canRotate: false },
+          { name: 'Полка вкладная', length: 880, width: 560, count: 6, canRotate: false },
+          { name: 'Дверь купе', length: 2350, width: 920, count: 2, canRotate: false }
+        ]
+      },
+      profile1d: {
+        mode: '1D',
+        kerf: 3.0,
+        margin: 15,
+        allowRot: false,
+        stock: [
+          { name: 'Профиль 40x40x2', length: 6000, width: 0, count: 10 }
+        ],
+        parts: [
+          { name: 'Стойка вертикальная', length: 2100, width: 0, count: 6, canRotate: false },
+          { name: 'Перемычка верх', length: 1450, width: 0, count: 4, canRotate: false },
+          { name: 'Перемычка диагональ', length: 1120, width: 0, count: 8, canRotate: false },
+          { name: 'Опора подпятник', length: 450, width: 0, count: 8, canRotate: false }
+        ]
+      },
+      decking1d: {
+        mode: '1D',
+        kerf: 4.5,
+        margin: 20,
+        allowRot: false,
+        stock: [
+          { name: 'Брус 100x100 Сосна', length: 4000, width: 0, count: 12 }
+        ],
+        parts: [
+          { name: 'Лага пола', length: 2600, width: 0, count: 5, canRotate: false },
+          { name: 'Столб террасы', length: 2150, width: 0, count: 4, canRotate: false },
+          { name: 'Обвязка короткая', length: 1350, width: 0, count: 8, canRotate: false },
+          { name: 'Укосина', length: 950, width: 0, count: 6, canRotate: false }
+        ]
+      }
+    };
+
+    function setMode(mode) {
+      currentMode = mode;
+      const mode1dBtn = document.getElementById('mode1dBtn');
+      const mode2dBtn = document.getElementById('mode2dBtn');
+      const rotOption = document.getElementById('rotationOptionContainer');
+      const stockDimHead = document.getElementById('stockDimHead');
+      const partsDimHead = document.getElementById('partsDimHead');
+      const partRotHead = document.getElementById('partRotHead');
+      const stockHelpText = document.getElementById('stockHelpText');
+
+      if (mode === '1D') {
+        mode1dBtn.className = "px-3 py-1.5 rounded-md transition-colors bg-sky-500 text-white shadow-sm";
+        mode2dBtn.className = "px-3 py-1.5 rounded-md transition-colors text-slate-400 hover:text-white";
+        rotOption.classList.add('opacity-40', 'pointer-events-none');
+        stockDimHead.innerText = "Длина (мм)";
+        partsDimHead.innerText = "Длина (мм)";
+        partRotHead.style.display = 'none';
+        stockHelpText.innerText = "Хлысты, балки, трубы, доски стандартной длины";
+      } else {
+        mode2dBtn.className = "px-3 py-1.5 rounded-md transition-colors bg-sky-500 text-white shadow-sm";
+        mode1dBtn.className = "px-3 py-1.5 rounded-md transition-colors text-slate-400 hover:text-white";
+        rotOption.classList.remove('opacity-40', 'pointer-events-none');
+        stockDimHead.innerText = "Длина × Ширина (мм)";
+        partsDimHead.innerText = "Длина × Ширина (мм)";
+        partRotHead.style.display = '';
+        stockHelpText.innerText = "Листы фанеры, ЛДСП, металла, стеклопакетов";
+      }
+      renderTableRows();
+      calculateOptimization();
+    }
+
+    function addStockRow(name = 'Заготовка', length = 2440, width = 1220, count = 2) {
+      const tbody = document.getElementById('stockTableBody');
+      const tr = document.createElement('tr');
+      tr.className = "hover:bg-slate-700/30 transition-colors";
+      
+      const widthField = currentMode === '2D' ? `
+        <span class="text-slate-500">×</span>
+        <input type="number" class="w-16 bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-white stock-width" value="${width}" placeholder="Ширина">
+      ` : '';
+
+      tr.innerHTML = `
+        <td class="p-2">
+          <input type="text" class="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-white stock-name" value="${name}">
+        </td>
+        <td class="p-2 flex items-center gap-1">
+          <input type="number" class="w-16 bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-white stock-length" value="${length}" placeholder="Длина">
+          ${widthField}
+        </td>
+        <td class="p-2">
+          <input type="number" class="w-12 bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-white stock-count" value="${count}" min="1" max="999">
+        </td>
+        <td class="p-2 text-right">
+          <button onclick="this.closest('tr').remove()" class="text-slate-500 hover:text-rose-400 p-1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+          </button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    }
+
+    function addPartRow(name = 'Деталь', length = 600, width = 400, count = 2, canRotate = true) {
+      const tbody = document.getElementById('partsTableBody');
+      const tr = document.createElement('tr');
+      tr.className = "hover:bg-slate-700/30 transition-colors";
+
+      const widthField = currentMode === '2D' ? `
+        <span class="text-slate-500">×</span>
+        <input type="number" class="w-16 bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-white part-width" value="${width}" placeholder="Ширина">
+      ` : '';
+
+      const rotField = currentMode === '2D' ? `
+        <td class="p-2 text-center">
+          <input type="checkbox" class="rounded bg-slate-900 border-slate-600 text-sky-500 part-rotate" ${canRotate ? 'checked' : ''} title="Разрешить поворот">
+        </td>
+      ` : '';
+
+      tr.innerHTML = `
+        <td class="p-2">
+          <input type="text" class="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-white part-name" value="${name}">
+        </td>
+        <td class="p-2 flex items-center gap-1">
+          <input type="number" class="w-16 bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-white part-length" value="${length}" placeholder="Длина">
+          ${widthField}
+        </td>
+        <td class="p-2">
+          <input type="number" class="w-12 bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-white part-count" value="${count}" min="1" max="999">
+        </td>
+        ${rotField}
+        <td class="p-2 text-right">
+          <button onclick="this.closest('tr').remove()" class="text-slate-500 hover:text-rose-400 p-1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+          </button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    }
+
+    function renderTableRows() {
+      // Re-populate according to mode
+      const stockTableBody = document.getElementById('stockTableBody');
+      const partsTableBody = document.getElementById('partsTableBody');
+      
+      // If table is empty, add defaults
+      if (stockTableBody.children.length === 0) {
+        if (currentMode === '1D') {
+          addStockRow('Профиль 6м', 6000, 0, 8);
+        } else {
+          addStockRow('Лист 2440×1220', 2440, 1220, 3);
+        }
+      } else {
+        // adjust existing rows to show or hide width & rotation
+        const currentData = getFormData();
+        stockTableBody.innerHTML = '';
+        partsTableBody.innerHTML = '';
+        currentData.stock.forEach(s => addStockRow(s.name, s.length, currentMode === '1D' ? 0 : s.width, s.count));
+        currentData.parts.forEach(p => addPartRow(p.name, p.length, currentMode === '1D' ? 0 : p.width, p.count, p.canRotate));
+      }
+    }
+
+    function loadPreset(key) {
+      const preset = PRESETS[key];
+      if (!preset) return;
+      document.getElementById('kerfInput').value = preset.kerf;
+      document.getElementById('marginInput').value = preset.margin;
+      if (preset.allowRot !== undefined) {
+        document.getElementById('allowRotationSelect').value = String(preset.allowRot);
+      }
+      
+      currentMode = preset.mode;
+      const mode1dBtn = document.getElementById('mode1dBtn');
+      const mode2dBtn = document.getElementById('mode2dBtn');
+      const rotOption = document.getElementById('rotationOptionContainer');
+      const stockDimHead = document.getElementById('stockDimHead');
+      const partsDimHead = document.getElementById('partsDimHead');
+      const partRotHead = document.getElementById('partRotHead');
+      const stockHelpText = document.getElementById('stockHelpText');
+
+      if (preset.mode === '1D') {
+        mode1dBtn.className = "px-3 py-1.5 rounded-md transition-colors bg-sky-500 text-white shadow-sm";
+        mode2dBtn.className = "px-3 py-1.5 rounded-md transition-colors text-slate-400 hover:text-white";
+        rotOption.classList.add('opacity-40', 'pointer-events-none');
+        stockDimHead.innerText = "Длина (мм)";
+        partsDimHead.innerText = "Длина (мм)";
+        partRotHead.style.display = 'none';
+        stockHelpText.innerText = "Хлысты, балки, трубы, доски стандартной длины";
+      } else {
+        mode2dBtn.className = "px-3 py-1.5 rounded-md transition-colors bg-sky-500 text-white shadow-sm";
+        mode1dBtn.className = "px-3 py-1.5 rounded-md transition-colors text-slate-400 hover:text-white";
+        rotOption.classList.remove('opacity-40', 'pointer-events-none');
+        stockDimHead.innerText = "Длина × Ширина (мм)";
+        partsDimHead.innerText = "Длина × Ширина (мм)";
+        partRotHead.style.display = '';
+        stockHelpText.innerText = "Листы фанеры, ЛДСП, металла, стеклопакетов";
+      }
+
+      document.getElementById('stockTableBody').innerHTML = '';
+      document.getElementById('partsTableBody').innerHTML = '';
+
+      preset.stock.forEach(s => addStockRow(s.name, s.length, s.width, s.count));
+      preset.parts.forEach(p => addPartRow(p.name, p.length, p.width, p.count, p.canRotate));
+
+      calculateOptimization();
+    }
+
+    function loadSampleData() {
+      loadPreset(currentMode === '1D' ? 'profile1d' : 'plywood');
+    }
+
+    function getFormData() {
+      const kerf = Math.max(0, parseFloat(document.getElementById('kerfInput').value) || 0);
+      const margin = Math.max(0, parseFloat(document.getElementById('marginInput').value) || 0);
+      const globalAllowRot = document.getElementById('allowRotationSelect').value === 'true';
+
+      const stockRows = document.querySelectorAll('#stockTableBody tr');
+      const stock = [];
+      stockRows.forEach(tr => {
+        const name = tr.querySelector('.stock-name')?.value || 'Заготовка';
+        const length = parseFloat(tr.querySelector('.stock-length')?.value) || 0;
+        const widthInput = tr.querySelector('.stock-width');
+        const width = widthInput ? (parseFloat(widthInput.value) || 0) : 0;
+        const count = parseInt(tr.querySelector('.stock-count')?.value) || 1;
+        if (length > 0 && (currentMode === '1D' || width > 0)) {
+          stock.push({ name, length, width, count });
+        }
+      });
+
+      const partRows = document.querySelectorAll('#partsTableBody tr');
+      const parts = [];
+      partRows.forEach((tr, idx) => {
+        const name = tr.querySelector('.part-name')?.value || `Деталь #${idx + 1}`;
+        const length = parseFloat(tr.querySelector('.part-length')?.value) || 0;
+        const widthInput = tr.querySelector('.part-width');
+        const width = widthInput ? (parseFloat(widthInput.value) || 0) : 0;
+        const count = parseInt(tr.querySelector('.part-count')?.value) || 1;
+        const rotCheck = tr.querySelector('.part-rotate');
+        const canRotate = rotCheck ? (rotCheck.checked && globalAllowRot) : false;
+        
+        if (length > 0 && (currentMode === '1D' || width > 0)) {
+          parts.push({
+            id: idx,
+            name,
+            length,
+            width,
+            count,
+            canRotate: globalAllowRot && canRotate,
+            color: PART_COLORS[idx % PART_COLORS.length]
+          });
+        }
+      });
+
+      return { kerf, margin, globalAllowRot, stock, parts };
+    }
+
+    // ==========================================
+    // 1D CUTTING STOCK ALGORITHM
+    // ==========================================
+    function optimize1D(data) {
+      const { kerf, margin, stock, parts } = data;
+      
+      // Expand parts list
+      let itemsToCut = [];
+      parts.forEach(p => {
+        for (let i = 0; i < p.count; i++) {
+          itemsToCut.push({
+            id: p.id,
+            name: p.name,
+            length: p.length,
+            color: p.color
+          });
+        }
+      });
+
+      // Sort parts decreasing length (First Fit Decreasing)
+      itemsToCut.sort((a, b) => b.length - a.length);
+
+      // Expand available stock bars
+      let availableBars = [];
+      stock.forEach((s, sIdx) => {
+        for (let i = 0; i < s.count; i++) {
+          availableBars.push({
+            stockIndex: sIdx,
+            name: s.name,
+            totalLength: s.length,
+            usableLength: Math.max(0, s.length - margin * 2),
+            margin: margin,
+            usedLength: 0,
+            cuts: [] // { item, x, length }
+          });
+        }
+      });
+
+      let placedCount = 0;
+      let unplacedItems = [];
+
+      for (const item of itemsToCut) {
+        let placed = false;
+        // Best-fit: find bar with minimal remaining space that still fits
+        let bestBarIdx = -1;
+        let minRemaining = Infinity;
+
+        for (let i = 0; i < availableBars.length; i++) {
+          const bar = availableBars[i];
+          const neededSpace = bar.cuts.length === 0 ? item.length : (kerf + item.length);
+          if (bar.usedLength + neededSpace <= bar.usableLength) {
+            const rem = bar.usableLength - (bar.usedLength + neededSpace);
+            if (rem < minRemaining) {
+              minRemaining = rem;
+              bestBarIdx = i;
+            }
+          }
+        }
+
+        if (bestBarIdx !== -1) {
+          const bar = availableBars[bestBarIdx];
+          const startX = bar.margin + bar.usedLength + (bar.cuts.length > 0 ? kerf : 0);
+          bar.cuts.push({
+            item,
+            x: startX,
+            length: item.length
+          });
+          bar.usedLength = (startX - bar.margin) + item.length;
+          placed = true;
+          placedCount++;
+        } else {
+          unplacedItems.push(item);
+        }
+      }
+
+      // Filter used bars
+      const usedBars = availableBars.filter(b => b.cuts.length > 0);
+
+      // Compute statistics
+      let totalStockLength = 0;
+      let totalPartsLength = 0;
+      let totalKerfLength = 0;
+
+      usedBars.forEach(b => {
+        totalStockLength += b.totalLength;
+        b.cuts.forEach(c => totalPartsLength += c.length);
+        if (b.cuts.length > 1) {
+          totalKerfLength += (b.cuts.length - 1) * kerf;
+        }
+        totalKerfLength += b.margin * 2;
+      });
+
+      const efficiency = totalStockLength > 0 ? (totalPartsLength / totalStockLength) * 100 : 0;
+      const waste = 100 - efficiency;
+
+      return {
+        mode: '1D',
+        sheets: usedBars.map((b, idx) => ({
+          sheetIndex: idx,
+          name: b.name,
+          length: b.totalLength,
+          width: 80, // Virtual height for 1D bar visualization
+          margin: b.margin,
+          cuts: b.cuts.map(c => ({
+            name: c.item.name,
+            x: c.x,
+            y: 10,
+            width: c.length,
+            height: 60,
+            rotated: false,
+            color: c.item.color
+          })),
+          usedLength: b.usedLength,
+          remnant: b.totalLength - (b.margin + b.usedLength)
+        })),
+        totalItems: itemsToCut.length,
+        placedCount,
+        unplacedCount: unplacedItems.length,
+        efficiency,
+        waste,
+        kerf,
+        margin
+      };
+    }
+
+    // ==========================================
+    // 2D CUTTING STOCK ALGORITHM (Guillotine & Bin Packing)
+    // ==========================================
+    function optimize2D(data) {
+      const { kerf, margin, stock, parts } = data;
+
+      // Expand parts list
+      let itemsToCut = [];
+      parts.forEach(p => {
+        for (let i = 0; i < p.count; i++) {
+          itemsToCut.push({
+            id: p.id,
+            name: p.name,
+            w: p.length,
+            h: p.width,
+            canRotate: p.canRotate,
+            color: p.color
+          });
+        }
+      });
+
+      // Sort items by max dimension or area descending
+      itemsToCut.sort((a, b) => (b.w * b.h) - (a.w * a.h) || Math.max(b.w, b.h) - Math.max(a.w, a.h));
+
+      // Available sheets
+      let availableSheets = [];
+      stock.forEach((s, sIdx) => {
+        for (let i = 0; i < s.count; i++) {
+          availableSheets.push({
+            stockIndex: sIdx,
+            name: s.name,
+            totalW: s.length,
+            totalH: s.width,
+            margin: margin,
+            usableW: Math.max(0, s.length - margin * 2),
+            usableH: Math.max(0, s.width - margin * 2),
+            // Free rectangles for Guillotine / MaxRects
+            freeRects: [{
+              x: margin,
+              y: margin,
+              w: Math.max(0, s.length - margin * 2),
+              h: Math.max(0, s.width - margin * 2)
+            }],
+            placedParts: []
+          });
+        }
+      });
+
+      let placedCount = 0;
+      let unplacedItems = [];
+
+      for (const item of itemsToCut) {
+        let placed = false;
+        let bestSheet = null;
+        let bestRectIdx = -1;
+        let bestRotated = false;
+        let minRemnantArea = Infinity;
+
+        // Find Best Short Side Fit or Best Area Fit among all available sheets
+        for (let sIdx = 0; sIdx < availableSheets.length; sIdx++) {
+          const sheet = availableSheets[sIdx];
+          
+          for (let rIdx = 0; rIdx < sheet.freeRects.length; rIdx++) {
+            const rect = sheet.freeRects[rIdx];
+
+            // Option 1: No rotation
+            if (item.w <= rect.w && item.h <= rect.h) {
+              const remArea = (rect.w * rect.h) - (item.w * item.h);
+              if (remArea < minRemnantArea) {
+                minRemnantArea = remArea;
+                bestSheet = sheet;
+                bestRectIdx = rIdx;
+                bestRotated = false;
+              }
+            }
+
+            // Option 2: 90 deg rotation if permitted
+            if (item.canRotate && item.h <= rect.w && item.w <= rect.h) {
+              const remArea = (rect.w * rect.h) - (item.w * item.h);
+              if (remArea < minRemnantArea) {
+                minRemnantArea = remArea;
+                bestSheet = sheet;
+                bestRectIdx = rIdx;
+                bestRotated = true;
+              }
+            }
+          }
+
+          // If found fit in this sheet, stop looking into other empty sheets to keep cuts concentrated
+          if (bestSheet !== null && bestSheet.placedParts.length > 0) {
+            break;
+          }
+        }
+
+        if (bestSheet !== null && bestRectIdx !== -1) {
+          const rect = bestSheet.freeRects[bestRectIdx];
+          bestSheet.freeRects.splice(bestRectIdx, 1);
+
+          const partW = bestRotated ? item.h : item.w;
+          const partH = bestRotated ? item.w : item.h;
+
+          // Place part
+          bestSheet.placedParts.push({
+            name: item.name,
+            x: rect.x,
+            y: rect.y,
+            width: partW,
+            height: partH,
+            origLength: item.w,
+            origWidth: item.h,
+            rotated: bestRotated,
+            color: item.color
+          });
+
+          // Guillotine split of remaining rectangle with Kerf compensation
+          // Remaining horizontally: right of part
+          // Remaining vertically: bottom of part
+          const wRemaining = rect.w - partW - kerf;
+          const hRemaining = rect.h - partH - kerf;
+
+          // Guillotine rule: Longer Axis Split
+          if (wRemaining > 0 && hRemaining > 0) {
+            if (partW > partH) {
+              // Split horizontally first
+              bestSheet.freeRects.push({
+                x: rect.x + partW + kerf,
+                y: rect.y,
+                w: wRemaining,
+                h: partH
+              });
+              bestSheet.freeRects.push({
+                x: rect.x,
+                y: rect.y + partH + kerf,
+                w: rect.w,
+                h: hRemaining
+              });
+            } else {
+              // Split vertically first
+              bestSheet.freeRects.push({
+                x: rect.x + partW + kerf,
+                y: rect.y,
+                w: wRemaining,
+                h: rect.h
+              });
+              bestSheet.freeRects.push({
+                x: rect.x,
+                y: rect.y + partH + kerf,
+                w: partW,
+                h: hRemaining
+              });
+            }
+          } else if (wRemaining > 0) {
+            bestSheet.freeRects.push({
+              x: rect.x + partW + kerf,
+              y: rect.y,
+              w: wRemaining,
+              h: rect.h
+            });
+          } else if (hRemaining > 0) {
+            bestSheet.freeRects.push({
+              x: rect.x,
+              y: rect.y + partH + kerf,
+              w: rect.w,
+              h: hRemaining
+            });
+          }
+
+          placed = true;
+          placedCount++;
+        } else {
+          unplacedItems.push(item);
+        }
+      }
+
+      // Filter only used sheets
+      const usedSheets = availableSheets.filter(s => s.placedParts.length > 0);
+
+      // Statistics calculation
+      let totalStockArea = 0;
+      let totalPartsArea = 0;
+
+      usedSheets.forEach(s => {
+        totalStockArea += (s.totalW * s.totalH);
+        s.placedParts.forEach(p => {
+          totalPartsArea += (p.width * p.height);
+        });
+      });
+
+      const efficiency = totalStockArea > 0 ? (totalPartsArea / totalStockArea) * 100 : 0;
+      const waste = 100 - efficiency;
+
+      return {
+        mode: '2D',
+        sheets: usedSheets.map((s, idx) => ({
+          sheetIndex: idx,
+          name: s.name,
+          length: s.totalW,
+          width: s.totalH,
+          margin: s.margin,
+          cuts: s.placedParts,
+          freeRects: s.freeRects
+        })),
+        totalItems: itemsToCut.length,
+        placedCount,
+        unplacedCount: unplacedItems.length,
+        efficiency,
+        waste,
+        kerf,
+        margin
+      };
+    }
+
+    // ==========================================
+    // EXECUTION & UI INTEGRATION
+    // ==========================================
+    function calculateOptimization() {
+      const data = getFormData();
+      if (data.stock.length === 0 || data.parts.length === 0) {
+        alert("Пожалуйста, добавьте хотя бы одну заготовку и одну деталь.");
+        return;
+      }
+
+      if (currentMode === '1D') {
+        calculationResults = optimize1D(data);
+      } else {
+        calculationResults = optimize2D(data);
+      }
+
+      currentSheetIndex = 0;
+      updateUIWithResults();
+    }
+
+    function updateUIWithResults() {
+      const emptyState = document.getElementById('canvasEmptyState');
+      if (!calculationResults || calculationResults.sheets.length === 0) {
+        if (emptyState) emptyState.style.display = 'flex';
+        document.getElementById('statEfficiency').innerText = '0%';
+        document.getElementById('statSheetsUsed').innerText = '0 шт';
+        document.getElementById('statPartsPlaced').innerText = `0 / ${calculationResults ? calculationResults.totalItems : 0}`;
+        document.getElementById('statWaste').innerText = '0%';
+        document.getElementById('sheetPagination').innerHTML = '';
+        document.getElementById('currentSheetInfo').innerText = 'Не удалось разместить детали. Проверьте габариты заготовок.';
+        return;
+      }
+
+      if (emptyState) emptyState.style.display = 'none';
+
+      // Update stat counters
+      document.getElementById('statEfficiency').innerText = `${calculationResults.efficiency.toFixed(1)}%`;
+      document.getElementById('statSheetsUsed').innerText = `${calculationResults.sheets.length} шт`;
+      document.getElementById('statPartsPlaced').innerText = `${calculationResults.placedCount} / ${calculationResults.totalItems}`;
+      document.getElementById('statWaste').innerText = `${calculationResults.waste.toFixed(1)}%`;
+
+      if (calculationResults.unplacedCount > 0) {
+        document.getElementById('statPartsSub').innerText = `⚠️ ${calculationResults.unplacedCount} шт не поместились!`;
+        document.getElementById('statPartsSub').className = 'text-[10px] text-rose-400 mt-1 font-semibold';
+      } else {
+        document.getElementById('statPartsSub').innerText = 'Все детали укомплектованы';
+        document.getElementById('statPartsSub').className = 'text-[10px] text-emerald-400 mt-1';
+      }
+
+      // Build Sheet Pagination Tabs
+      const pagContainer = document.getElementById('sheetPagination');
+      pagContainer.innerHTML = '';
+      calculationResults.sheets.forEach((sheet, idx) => {
+        const btn = document.createElement('button');
+        btn.innerText = `${currentMode === '1D' ? 'Хлыст' : 'Лист'} ${idx + 1}`;
+        btn.className = `px-2.5 py-1 rounded text-xs transition-colors ${
+          idx === currentSheetIndex 
+            ? 'bg-sky-500 text-white font-semibold' 
+            : 'bg-slate-700/70 text-slate-300 hover:bg-slate-700'
+        }`;
+        btn.onclick = () => {
+          currentSheetIndex = idx;
+          updateUIWithResults();
+        };
+        pagContainer.appendChild(btn);
+      });
+
+      redrawActiveSheet();
+      updateSheetPartsTable();
+    }
+
+    function updateSheetPartsTable() {
+      const tbody = document.getElementById('sheetPartsTableBody');
+      const badge = document.getElementById('sheetPartCountBadge');
+      tbody.innerHTML = '';
+
+      if (!calculationResults || !calculationResults.sheets[currentSheetIndex]) {
+        tbody.innerHTML = `<tr><td colspan="5" class="py-2 px-2 text-slate-500">Нет данных</td></tr>`;
+        return;
+      }
+
+      const sheet = calculationResults.sheets[currentSheetIndex];
+      badge.innerText = `${sheet.cuts.length} деталей на листе`;
+
+      sheet.cuts.forEach((cut, i) => {
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-slate-700/40 transition-colors";
+        tr.innerHTML = `
+          <td class="py-1 px-2 font-mono text-[11px] text-slate-400">${i + 1}</td>
+          <td class="py-1 px-2 font-medium flex items-center gap-1.5">
+            <span class="w-2.5 h-2.5 rounded-sm inline-block" style="background-color: ${cut.color.border}"></span>
+            ${cut.name}
+          </td>
+          <td class="py-1 px-2 font-mono text-[11px]">${Math.round(cut.width)} × ${Math.round(cut.height)}</td>
+          <td class="py-1 px-2 font-mono text-[11px] text-slate-400">X: ${Math.round(cut.x)}, Y: ${Math.round(cut.y)}</td>
+          <td class="py-1 px-2 text-[11px]">${cut.rotated ? '<span class="text-amber-400 font-medium">90°</span>' : '<span class="text-slate-500">—</span>'}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // ==========================================
+    // CANVAS RENDERING
+    // ==========================================
+    function redrawActiveSheet() {
+      if (!calculationResults || !calculationResults.sheets[currentSheetIndex]) return;
+
+      const sheet = calculationResults.sheets[currentSheetIndex];
+      const canvas = document.getElementById('cuttingCanvas');
+      const ctx = canvas.getContext('2d');
+      const showDims = document.getElementById('showDimensionsCheck').checked;
+      const showKerf = document.getElementById('showKerfCheck').checked;
+
+      // Update footer info
+      document.getElementById('currentSheetInfo').innerHTML = `
+        <span class="text-slate-200 font-medium">${sheet.name}</span> — 
+        Габариты: <b>${Math.round(sheet.length)}</b> × <b>${Math.round(sheet.width)}</b> мм | 
+        Деталей: <b>${sheet.cuts.length}</b> шт | 
+        Кромка: <b>${sheet.margin}</b> мм
+      `;
+
+      // Canvas sizing with High-DPI support
+      const containerWidth = document.getElementById('canvasWrapper').clientWidth - 30;
+      const targetHeight = currentMode === '1D' ? 180 : 420;
+      
+      const padding = 35;
+      const drawWidth = containerWidth - padding * 2;
+      const drawHeight = targetHeight - padding * 2;
+
+      // Calculate scale to fit canvas
+      const scaleX = drawWidth / sheet.length;
+      const scaleY = drawHeight / sheet.width;
+      const scale = Math.min(scaleX, scaleY);
+
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = (sheet.length * scale + padding * 2) * dpr;
+      canvas.height = (sheet.width * scale + padding * 2) * dpr;
+      canvas.style.width = `${sheet.length * scale + padding * 2}px`;
+      canvas.style.height = `${sheet.width * scale + padding * 2}px`;
+
+      ctx.resetTransform();
+      ctx.scale(dpr, dpr);
+
+      // Clear canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const originX = padding;
+      const originY = padding;
+
+      // 1. Draw Raw Stock Background (The Sheet / Board)
+      const stockW = sheet.length * scale;
+      const stockH = sheet.width * scale;
+
+      ctx.fillStyle = '#1e293b'; // Slate 800 background
+      ctx.fillRect(originX, originY, stockW, stockH);
+      ctx.strokeStyle = '#475569'; // Slate 600 border
+      ctx.lineWidth = 2;
+      ctx.strokeRect(originX, originY, stockW, stockH);
+
+      // 2. Draw Margin / Trim boundary if present
+      if (sheet.margin > 0) {
+        const mx = originX + sheet.margin * scale;
+        const my = originY + sheet.margin * scale;
+        const mw = (sheet.length - sheet.margin * 2) * scale;
+        const mh = (sheet.width - sheet.margin * 2) * scale;
+
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = '#ef444455';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(mx, my, mw, mh);
+        ctx.setLineDash([]);
+      }
+
+      // 3. Draw Free Rectangles (Remnants / Деловой остаток) in 2D
+      if (currentMode === '2D' && sheet.freeRects) {
+        sheet.freeRects.forEach(rect => {
+          if (rect.w > 30 && rect.h > 30) {
+            const rx = originX + rect.x * scale;
+            const ry = originY + rect.y * scale;
+            const rw = rect.w * scale;
+            const rh = rect.h * scale;
+
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.08)'; // Light amber
+            ctx.fillRect(rx, ry, rw, rh);
+
+            ctx.setLineDash([3, 3]);
+            ctx.strokeStyle = 'rgba(245, 158, 11, 0.35)';
+            ctx.strokeRect(rx, ry, rw, rh);
+            ctx.setLineDash([]);
+
+            // Draw label if space allows
+            if (rw > 50 && rh > 25) {
+              ctx.font = '10px -apple-system, sans-serif';
+              ctx.fillStyle = 'rgba(245, 158, 11, 0.6)';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(`Остаток ${Math.round(rect.w)}×${Math.round(rect.h)}`, rx + rw / 2, ry + rh / 2);
+            }
+          }
+        });
+      }
+
+      // 4. Draw Placed Cuts / Parts
+      sheet.cuts.forEach((cut, i) => {
+        const cx = originX + cut.x * scale;
+        const cy = originY + cut.y * scale;
+        const cw = cut.width * scale;
+        const ch = cut.height * scale;
+
+        // Part Body
+        ctx.fillStyle = cut.color.fill;
+        ctx.fillRect(cx, cy, cw, ch);
+
+        // Part Border
+        ctx.strokeStyle = cut.color.border;
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(cx, cy, cw, ch);
+
+        // Saw Kerf representation if requested
+        if (showKerf && calculationResults.kerf > 0) {
+          const kw = calculationResults.kerf * scale;
+          ctx.fillStyle = 'rgba(244, 63, 94, 0.4)'; // Rose 500
+          // Right kerf
+          if (cut.x + cut.width < sheet.length - sheet.margin) {
+            ctx.fillRect(cx + cw, cy, kw, ch);
+          }
+          // Bottom kerf (for 2D)
+          if (currentMode === '2D' && cut.y + cut.height < sheet.width - sheet.margin) {
+            ctx.fillRect(cx, cy + ch, cw, kw);
+          }
+        }
+
+        // Text Labels on Part
+        if (cw > 20 && ch > 14) {
+          ctx.save();
+          ctx.rect(cx, cy, cw, ch);
+          ctx.clip();
+
+          // Title / Tag
+          ctx.fillStyle = '#ffffff';
+          ctx.font = cw > 60 && ch > 30 ? 'bold 11px -apple-system, sans-serif' : '10px -apple-system, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+
+          const centerY = ch > 35 ? (cy + ch / 2 - 7) : (cy + ch / 2);
+          ctx.fillText(`${i + 1}. ${cut.name}`, cx + cw / 2, centerY);
+
+          // Dimensions Subtitle
+          if (showDims && ch > 35 && cw > 50) {
+            ctx.font = '10px -apple-system, sans-serif';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            const dimStr = currentMode === '1D' 
+              ? `${Math.round(cut.width)} мм`
+              : `${Math.round(cut.width)} × ${Math.round(cut.height)}` + (cut.rotated ? ' ↻' : '');
+            ctx.fillText(dimStr, cx + cw / 2, cy + ch / 2 + 8);
+          }
+
+          ctx.restore();
+        }
+      });
+
+      // 5. Outer Dimension Annotations (Ruler guides)
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '11px -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+
+      // Top Width Ruler
+      ctx.fillText(`${Math.round(sheet.length)} мм`, originX + stockW / 2, originY - 10);
+      drawDimensionLine(ctx, originX, originY - 5, originX + stockW, originY - 5);
+
+      // Left Height Ruler
+      if (currentMode === '2D') {
+        ctx.save();
+        ctx.translate(originX - 12, originY + stockH / 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.textAlign = 'center';
+        ctx.fillText(`${Math.round(sheet.width)} мм`, 0, 0);
+        ctx.restore();
+        drawDimensionLine(ctx, originX - 5, originY, originX - 5, originY + stockH);
+      }
+    }
+
+    function drawDimensionLine(ctx, x1, y1, x2, y2) {
+      ctx.strokeStyle = '#64748b';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+
+      // Tick arrows or end caps
+      const isHoriz = y1 === y2;
+      ctx.beginPath();
+      if (isHoriz) {
+        ctx.moveTo(x1, y1 - 3); ctx.lineTo(x1, y1 + 3);
+        ctx.moveTo(x2, y2 - 3); ctx.lineTo(x2, y2 + 3);
+      } else {
+        ctx.moveTo(x1 - 3, y1); ctx.lineTo(x1 + 3, y1);
+        ctx.moveTo(x2 - 3, y2); ctx.lineTo(x2 + 3, y2);
+      }
+      ctx.stroke();
+    }
+
+    function downloadCanvasImage() {
+      const canvas = document.getElementById('cuttingCanvas');
+      if (!canvas) return;
+      const link = document.createElement('a');
+      link.download = `карта_раскроя_лист_${currentSheetIndex + 1}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+
+    // Initialize with Plywood preset on load
+    window.addEventListener('DOMContentLoaded', () => {
+      loadPreset('plywood');
+    });
+
+    window.addEventListener('resize', () => {
+      if (calculationResults) {
+        redrawActiveSheet();
+      }
+    });
+  </script>
+</body>
+</html>
